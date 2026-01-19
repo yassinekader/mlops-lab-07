@@ -83,7 +83,7 @@ class PredictRequest(BaseModel):
     avg_session_minutes: float = Field(..., ge=0.0, le=500.0)
     plan_type: str
     region: str
-    request_id: Optional[str] = None
+    request_id: Optional[str] = 1
 
 
 
@@ -227,6 +227,48 @@ def health() -> dict[str, Any]:
     except Exception as exc:  # pragma: no cover - simple endpoint de debug
         return {"status": "error", "detail": str(exc)}
 
+@app.get("/startup")
+def startup() -> dict[str, Any]:
+    """
+    Endpoint utilisé par Kubernetes startupProbe.
+
+    L'application est considérée comme démarrée UNIQUEMENT si :
+    - le registry existe,
+    - le fichier current_model.txt existe,
+    - le fichier n'est pas vide.
+    """
+    if not REGISTRY_DIR.exists():
+        raise HTTPException(
+            status_code=503,
+            detail="Registry non monté (PVC absent ou incorrect).",
+        )
+
+    if not CURRENT_MODEL_PATH.exists():
+        raise HTTPException(
+            status_code=503,
+            detail="Aucun modèle courant. Lancer train.py (avec gate) d'abord.",
+        )
+
+    name = CURRENT_MODEL_PATH.read_text(encoding="utf-8").strip()
+    if not name:
+        raise HTTPException(
+            status_code=503,
+            detail="current_model.txt vide.",
+        )
+
+    return {
+        "status": "ok",
+        "current_model": name,
+    }
+
+
+@app.get("/ready")
+def ready() -> dict[str, Any]:
+    try:
+        model_name = get_current_model_name()
+        return {"status": "ready", "current_model": model_name}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
 
 
 @app.post("/predict")
@@ -293,7 +335,7 @@ def predict(req: PredictRequest) -> dict[str, Any]:
 
 
     out: dict[str, Any] = {
-        "request_id": str(req.request_id)+"_"+str(len(req.request_id))+"api",
+        "request_id": req.request_id,
         "model_version": model_name,
         "prediction": pred,
         "probability": round(proba, 6),
@@ -304,4 +346,4 @@ def predict(req: PredictRequest) -> dict[str, Any]:
 
 
     log_prediction(out)
-    return out
+    return out 
